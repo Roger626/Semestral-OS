@@ -1,0 +1,11 @@
+# Dependencias para el frontend de Gestor de Menú - Restaurante
+
+# Framework GUI
+PyQt6>=6.6.0
+PyQt6-Qt6>=6.6.0
+
+# Comunicación con Backend
+requests>=2.32.5
+
+# Opcional: manejo de variables de entorno
+python-dotenv>=1.0.1
