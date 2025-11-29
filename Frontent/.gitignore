@@ -1,7 +1,7 @@
 # Entorno virtual
 venv/
-ENV/
-env/
+# ENV/
+# env/
 
 # Archivos de configuración local
 .env
