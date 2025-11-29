@@ -5,8 +5,9 @@ Contiene el layout principal con dos columnas
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QFrame, QScrollArea, QMessageBox)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QCursor
+import time
 
 from styles.theme import Theme
 from styles.colors import Colors
@@ -15,6 +16,31 @@ from ui.toolbar_actions import ToolbarActions
 from ui.image_viewer import ImageViewer
 from utils.print_manager import PrintManager
 from utils.api_client import APIClient
+
+
+class DataUpdater(QThread):
+    """Hilo para verificar actualizaciones en segundo plano"""
+    data_changed = pyqtSignal(list)
+    
+    def __init__(self, api_client):
+        super().__init__()
+        self.api_client = api_client
+        self.running = True
+        
+    def run(self):
+        while self.running:
+            try:
+                # Verificar actualizaciones cada 3 segundos
+                time.sleep(3)
+                result = self.api_client.get_all_dishes()
+                if result.get('success'):
+                    self.data_changed.emit(result.get('data', []))
+            except Exception:
+                pass
+            
+    def stop(self):
+        self.running = False
+        self.wait()
 
 
 class MainWindow(QMainWindow):
@@ -42,6 +68,88 @@ class MainWindow(QMainWindow):
         
         # Cargar datos del backend
         self.load_data_from_backend()
+        
+        # Iniciar auto-actualización
+        self.start_auto_refresh()
+
+    def start_auto_refresh(self):
+        """Inicia el hilo de actualización automática"""
+        self.updater = DataUpdater(self.api_client)
+        self.updater.data_changed.connect(self.handle_remote_update)
+        self.updater.start()
+        
+    def closeEvent(self, event):
+        """Detener hilo al cerrar"""
+        if hasattr(self, 'updater'):
+            self.updater.stop()
+        event.accept()
+        
+    def handle_remote_update(self, raw_data):
+        """Maneja las actualizaciones recibidas del backend"""
+        # Procesar datos nuevos
+        new_records = [
+            {
+                "id": dish.get("id"),
+                "name": dish.get("nombre"),
+                "price": str(dish.get("precio", "0.00")),
+                "date": str(dish.get("fecha_creacion", "")) if dish.get("fecha_creacion") else "",
+                "image_url": dish.get("imagen_url", ""),
+                "image_path": ""
+            }
+            for dish in raw_data
+        ]
+        
+        # Comparar si hay cambios reales (ignorando image_path local)
+        if self._has_data_changed(new_records):
+            # Guardar ID actual para intentar mantener la selección
+            current_id = None
+            if self.records_data and 0 <= self.current_record_index < len(self.records_data):
+                current_id = self.records_data[self.current_record_index].get('id')
+            
+            # Actualizar datos
+            self.records_data = new_records
+            
+            # Restaurar selección
+            new_index = 0
+            if current_id:
+                for i, record in enumerate(self.records_data):
+                    if record.get('id') == current_id:
+                        new_index = i
+                        break
+            
+            # Si el registro actual fue eliminado, ir al último o al primero
+            if new_index == 0 and current_id and not any(r.get('id') == current_id for r in self.records_data):
+                if self.records_data:
+                    new_index = max(0, min(self.current_record_index, len(self.records_data) - 1))
+                else:
+                    new_index = -1
+
+            self.current_record_index = new_index
+            
+            # Actualizar UI
+            if self.records_data and self.current_record_index >= 0:
+                self.load_record(self.current_record_index)
+            else:
+                self.form_fields.clear_data()
+                self.image_viewer.clear_image()
+                self.toolbar.update_navigation_label(0, 0)
+                
+            self.statusBar().showMessage("🔄 Datos actualizados remotamente", 2000)
+
+    def _has_data_changed(self, new_records):
+        """Compara los datos nuevos con los actuales"""
+        if len(new_records) != len(self.records_data):
+            return True
+            
+        for i, new_record in enumerate(new_records):
+            current = self.records_data[i]
+            # Comparar campos clave
+            if (new_record['id'] != current['id'] or
+                new_record['name'] != current['name'] or
+                new_record['price'] != current['price'] or
+                new_record['image_url'] != current['image_url']):
+                return True
+        return False
     
     def init_ui(self):
         """Inicializa la interfaz de usuario"""
